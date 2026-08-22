@@ -2,10 +2,8 @@ import { Globe2, LockKeyhole, Search, ShieldCheck } from "lucide-react";
 import type { DeviceProfile, SecuritySnapshot } from "../types";
 import { DeviceIcon } from "./DeviceIcon";
 
-const positions: Record<string, string> = { phone: "device-pos-1", laptop: "device-pos-2", tv: "device-pos-3", unknown: "device-pos-4" };
-
-function Node({ device, selected, onSelect }: { device: DeviceProfile; selected: boolean; onSelect: () => void }) {
-  return <button className={`device-node ${positions[device.id] ?? ""} ${device.trust === "unknown" ? "unknown" : ""} ${selected ? "selected" : ""}`} onClick={onSelect} aria-label={`${device.name}, ${device.trust}`}>
+function Node({ device, position, selected, onSelect }: { device: DeviceProfile; position: number; selected: boolean; onSelect: () => void }) {
+  return <button className={`device-node device-pos-${position} ${device.trust === "unknown" ? "unknown" : ""} ${selected ? "selected" : ""}`} onClick={onSelect} aria-label={`${device.name}, ${device.trust}`}>
     <span className="device-orb"><DeviceIcon type={device.type}/><span className={`node-state ${device.trust === "unknown" ? "review" : "good"}`}>{device.trust === "unknown" ? "!" : "✓"}</span></span>
     <strong>{device.name}</strong><small>{device.ip}</small><span className="trust-line">Trust: <b>{device.trust === "unknown" ? "Unknown" : "Trusted"}</b></span><span>Access: {device.access}</span>
   </button>;
@@ -15,6 +13,7 @@ export function TopologyMap({ devices, snapshot, selectedId, onSelect, onOpenVie
   const pc = devices.find(d => d.type === "pc") ?? devices[0];
   const router = devices.find(d => d.type === "router") ?? devices[1];
   const endpoints = devices.filter(d => !["pc", "router"].includes(d.type)).slice(0, 4);
+  if (!pc || !router) return <section className="map-canvas topology-unavailable" aria-label="Home network topology"><Search size={30}/><h2>Network relationship unavailable</h2><p>Sentinel Local did not invent a router or device. Connect to a private network, then refresh the app.</p></section>;
   return <section className="map-canvas" aria-label="Home network topology">
     <p className="map-hint"><Search size={15}/> Select any device for details</p>
     <svg className="connections" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
@@ -28,7 +27,7 @@ export function TopologyMap({ devices, snapshot, selectedId, onSelect, onOpenVie
     <button className="core-node router-node" onClick={() => onSelect(router.id)}><span><DeviceIcon type="router" size={34}/></span><i>✓</i></button>
     <div className="router-label"><strong>{router.name}</strong><small>{router.ip}<br/>Router firewall: Observed</small></div>
     <button className="outline-action check-vpn" onClick={() => onOpenView("privacy")}><ShieldCheck size={15}/> Check VPN</button>
-    {endpoints.map(device => <Node key={device.id} device={device} selected={selectedId === device.id} onSelect={() => onSelect(device.id)} />)}
+    {endpoints.map((device, index) => <Node key={device.id} device={device} position={index + 1} selected={selectedId === device.id} onSelect={() => onSelect(device.id)} />)}
     <div className="mobile-topology" aria-label="Network relationships">
       <div><Globe2/><span><strong>Internet</strong><small>through {snapshot.vpnName} · {snapshot.vpnConnected ? "VPN connected" : "VPN needs review"}</small></span></div>
       <div><DeviceIcon type="router"/><span><strong>{router.name}</strong><small>{router.ip} · private gateway</small></span></div>

@@ -3,17 +3,19 @@ import { describe, expect, it } from "vitest";
 import App from "./App";
 
 describe("Sentinel Local", () => {
-  it("renders the approved security map and local-only status", () => {
+  it("renders the security map without inventing devices outside Tauri", async () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "Home security map" })).toBeInTheDocument();
-    expect(screen.getAllByText("Local only").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: /Unknown device, unknown/i })).toBeInTheDocument();
+    expect((await screen.findAllByText("Local only")).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Network relationship unavailable" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Unknown device, unknown/i })).not.toBeInTheDocument();
   });
 
-  it("navigates to threat management and labels remediation as simulated", () => {
+  it("navigates to live findings and states the safe release boundary", async () => {
     render(<App />);
+    await screen.findByRole("heading", { name: "Network relationship unavailable" });
     fireEvent.click(screen.getByRole("button", { name: /Threats/i }));
     expect(screen.getByRole("heading", { name: "Threat management", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText(/simulated in this prototype/i)).toBeInTheDocument();
+    expect(screen.getByText(/Non-destructive release boundary/i)).toBeInTheDocument();
   });
 });

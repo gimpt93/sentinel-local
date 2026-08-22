@@ -1,6 +1,6 @@
 # Sentinel Local
 
-Sentinel Local is a local-first Windows 11 security center prototype. It combines a device-first home-network map with Windows protection status, explicit malware scans, privacy controls, network-member review, and evidence-based diagnostics.
+Sentinel Local is a local-first Windows 11 security center. Its safe release combines a device-first home-network map with live Windows protection status, explicit malware scans, privacy controls, network-member review, and evidence-based diagnostics.
 
 The application uses a React and TypeScript interface inside Tauri v2, with narrowly scoped Rust commands for local Windows and network observations. It does not run a localhost web server in packaged builds.
 
@@ -18,7 +18,7 @@ The application uses a React and TypeScript interface inside Tauri v2, with narr
 
 ## Safety boundaries
 
-- Quarantine, deletion, firewall changes, network resets, and member restrictions are simulations in this prototype.
+- Quarantine, deletion, firewall changes, network resets, and member restrictions are deliberately unavailable. This release never presents those controls as completed system actions.
 - Router changes remain in the router's own interface. Sentinel Local never stores router or VPN credentials.
 - Device vendors and types are observations, not proof of a person's identity.
 - Sentinel Local does not claim to make a user anonymous.
@@ -83,7 +83,8 @@ npm run tauri -- build
 
 See [SECURITY.md](SECURITY.md) for responsible disclosure and supported-version information.
 
-## Project status
+## Release status
 
-Sentinel Local is an early prototype, not a replacement for Microsoft Defender, a managed endpoint-security platform, or professional incident response. The repository intentionally has no open-source license yet; all rights remain reserved until a license is selected.
+Version 0.2 is a safe, non-destructive live release. Status, topology, diagnostics, tool detection, Defender scans, ClamAV file scans, and findings use local Windows data; unavailable information is shown as unavailable rather than replaced with sample data. Windows Update status is currently a 45-day installed-hotfix recency check.
 
+Sentinel Local is not a replacement for Microsoft Defender, a managed endpoint-security platform, or professional incident response. Release installers are currently unsigned, so Windows may show a publisher warning. The repository intentionally has no open-source license yet; all rights remain reserved until a license is selected.

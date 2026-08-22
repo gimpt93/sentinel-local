@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Download, ExternalLink, FileSearch, Globe2, Info, LockKeyhole, Network, Play, RefreshCw, ScanSearch, ShieldCheck, SlidersHorizontal, Wifi } from "lucide-react";
-import type { DeviceProfile, DiagnosticResult, ScanProgress, ToolStatus } from "../types";
+import type { DeviceProfile, DiagnosticResult, ScanProgress, ThreatFinding, ToolStatus } from "../types";
 
 export function SectionHeader({ title, description }: { title: string; description: string }) { return <div className="section-heading"><h2>{title}</h2><p>{description}</p></div>; }
 
@@ -16,12 +16,11 @@ export function ScansView({ tools, progress, onStart, onClamScan, onCancel }: { 
     <article className="feature-card"><span className="feature-icon"><Globe2/></span><h3>Advanced analysis</h3><p>Open Wireshark or Nmap if installed. Sentinel Local never captures packets silently.</p><button>Detect advanced tools</button></article></div></div>;
 }
 
-export function ThreatsView() {
-  const [simulation, setSimulation] = useState<string>();
+export function ThreatsView({ findings, onRefresh }: { findings: ThreatFinding[]; onRefresh: () => void }) {
   return <div className="view-content"><SectionHeader title="Threat management" description="Review evidence before taking action. Nothing is removed automatically."/>
-    <div className="notice success"><CheckCircle2/><span><strong>No active findings</strong><small>Your recent scans did not report malware.</small></span></div>
-    <section className="table-panel"><div className="panel-title"><h3>Findings</h3><span className="badge good-badge">0 active</span></div><table><thead><tr><th>Finding</th><th>Engine</th><th>Confidence</th><th>Detected</th><th>Action</th></tr></thead><tbody><tr className="empty-row"><td colSpan={5}><ShieldCheck/><strong>No findings to review</strong><span>New detections will appear here with their source and evidence.</span></td></tr></tbody></table></section>
-    <section className="simulation-panel"><Info/><div><strong>Remediation safety boundary</strong><p>Quarantine, restore, delete, and Defender remediation are simulated in this prototype.</p>{simulation && <span className="badge review-badge" aria-live="polite">Simulation: {simulation}</span>}</div><button onClick={() => setSimulation("quarantine workflow reviewed")}>Preview quarantine flow</button></section></div>;
+    {findings.length === 0 && <div className="notice success"><CheckCircle2/><span><strong>No active findings</strong><small>Windows Security and completed Sentinel Local scans did not return current findings.</small></span><button onClick={onRefresh}>Refresh</button></div>}
+    <section className="table-panel"><div className="panel-title"><h3>Live findings</h3><span className={`badge ${findings.length ? "review-badge" : "good-badge"}`}>{findings.length} active</span></div><table><thead><tr><th>Finding</th><th>Engine</th><th>Confidence</th><th>Detected</th><th>Safe action</th></tr></thead><tbody>{findings.length === 0 ? <tr className="empty-row"><td colSpan={5}><ShieldCheck/><strong>No findings to review</strong><span>New Defender or ClamAV detections will appear here.</span></td></tr> : findings.map(f => <tr key={f.id}><td><strong>{f.classification}</strong><small>{f.location}</small></td><td>{f.engine}</td><td>{f.confidence}</td><td>{new Date(f.detectedAt).toLocaleString()}</td><td><span className="badge review-badge">Review in source tool</span></td></tr>)}</tbody></table></section>
+    <section className="simulation-panel"><Info/><div><strong>Non-destructive release boundary</strong><p>Sentinel Local reports live findings but delegates quarantine, restore, and removal to Windows Security or the originating scanner.</p></div></section></div>;
 }
 
 export function PrivacyView({ tools, onOpen }: { tools: ToolStatus[]; onOpen: (id: string) => void }) {
