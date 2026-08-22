@@ -16,7 +16,7 @@ export interface SecuritySnapshot {
 export interface DeviceProfile {
   id: string;
   name: string;
-  type: "pc" | "router" | "phone" | "laptop" | "tv" | "unknown";
+  type: "pc" | "desktop" | "router" | "cellphone" | "laptop" | "tv" | "streaming" | "unknown";
   ip: string;
   mac: string;
   vendor?: string;
@@ -50,5 +50,6 @@ export interface ToolStatus {
 export interface ScanRequest { scanType: "smart" | "quick" | "full" | "file" | "network"; engine: "defender" | "clamav" | "local"; targets: string[]; exclusions: string[]; consentTimestamp: string; }
 export interface ScanProgress { id: string; state: "queued" | "running" | "complete" | "cancelled" | "failed"; percent: number; message: string; startedAt: string; }
 export interface ThreatFinding { id: string; engine: string; classification: string; confidence: string; location: string; sha256: string; detectedAt: string; severity: "low" | "medium" | "high"; availableActions: string[]; simulatedState?: string; }
+export interface ThreatActionResult { findingId: string; action: "quarantine" | "remove" | "inspect"; status: "completed" | "opened_security" | "unavailable"; message: string; }
 export interface DiagnosticResult { id: string; check: string; severity: Severity; evidence: string; recommendation: string; elevationRequired: boolean; }
 export interface ActivityEvent { id: string; type: "device" | "scan" | "blocked" | "update" | "vpn"; title: string; detail: string; time: string; }

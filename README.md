@@ -12,13 +12,17 @@ The application uses a React and TypeScript interface inside Tauri v2, with narr
 - Microsoft Defender quick and full scan launch after explicit user action
 - ClamAV on-demand file scanning when an official installation is detected
 - Detection and official guidance for ClamAV, simplewall, Proton VPN Free, uBlock Origin, Wireshark, and Nmap
-- Local network-member labels and metadata-only SQLite storage
+- Editable local network-member names, types, trust labels, and metadata-only SQLite storage
+- Persistent light and dark interface themes
+- Expandable device evidence in the overview inspector
+- Hash-verified ClamAV quarantine and removal restricted to Sentinel Local's quarantine directory
 - Private-gateway validation before opening router controls
 - Responsive, keyboard-accessible security map and device inspector
 
 ## Safety boundaries
 
-- Quarantine, deletion, firewall changes, network resets, and member restrictions are deliberately unavailable. This release never presents those controls as completed system actions.
+- ClamAV quarantine requires an unchanged hash and moves only the explicitly scanned file into Sentinel Local's private local quarantine. Permanent removal is limited to a previously quarantined copy and requires confirmation.
+- Microsoft Defender findings hand remediation to Windows Security. Firewall changes, network resets, and member restrictions remain unavailable.
 - Router changes remain in the router's own interface. Sentinel Local never stores router or VPN credentials.
 - Device vendors and types are observations, not proof of a person's identity.
 - Sentinel Local does not claim to make a user anonymous.
@@ -85,6 +89,6 @@ See [SECURITY.md](SECURITY.md) for responsible disclosure and supported-version 
 
 ## Release status
 
-Version 0.2 is a safe, non-destructive live release. Status, topology, diagnostics, tool detection, Defender scans, ClamAV file scans, and findings use local Windows data; unavailable information is shown as unavailable rather than replaced with sample data. Windows Update status is currently a 45-day installed-hotfix recency check.
+Version 0.3 adds dark mode, expanded device inspection, editable member names and device categories, and guarded ClamAV remediation. Status, topology, diagnostics, tool detection, Defender scans, ClamAV file scans, and findings use local Windows data; unavailable information is shown as unavailable rather than replaced with sample data. Windows Update status is currently a 45-day installed-hotfix recency check.
 
 Sentinel Local is not a replacement for Microsoft Defender, a managed endpoint-security platform, or professional incident response. Release installers are currently unsigned, so Windows may show a publisher warning. The repository intentionally has no open-source license yet; all rights remain reserved until a license is selected.

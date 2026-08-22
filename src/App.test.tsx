@@ -16,6 +16,15 @@ describe("Sentinel Local", () => {
     await screen.findByRole("heading", { name: "Network relationship unavailable" });
     fireEvent.click(screen.getByRole("button", { name: /Threats/i }));
     expect(screen.getByRole("heading", { name: "Threat management", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText(/Non-destructive release boundary/i)).toBeInTheDocument();
+    expect(screen.getByText(/Protected remediation boundary/i)).toBeInTheDocument();
+  });
+
+  it("persists dark mode from settings", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Network relationship unavailable" });
+    fireEvent.click(screen.getByRole("button", { name: /Settings/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Dark mode" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("sentinel-theme")).toBe("dark");
   });
 });

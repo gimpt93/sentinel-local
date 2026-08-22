@@ -1,6 +1,6 @@
 [package]
 name = "sentinel-local"
-version = "0.2.0"
+version = "0.3.0"
 description = "A local-first Windows security center safe release"
 authors = ["Sentinel Local contributors"]
 edition = "2021"

@@ -98,6 +98,14 @@ struct ThreatFinding {
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ThreatActionResult {
+    finding_id: String,
+    action: String,
+    status: String,
+    message: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DiagnosticResult {
     id: String,
     check: String,
@@ -127,8 +135,11 @@ struct ScanRecord {
 struct AppState {
     scans: Mutex<HashMap<String, ScanRecord>>,
     findings: Mutex<Vec<ThreatFinding>>,
+    finding_sources: Mutex<HashMap<String, PathBuf>>,
+    quarantined: Mutex<HashMap<String, PathBuf>>,
     db_path: PathBuf,
     scan_dir: PathBuf,
+    quarantine_dir: PathBuf,
 }
 
 trait NoWindow {
@@ -170,7 +181,11 @@ fn ps_bool(script: &str) -> Option<bool> {
 }
 fn db(path: &Path) -> Result<Connection, String> {
     let c = Connection::open(path).map_err(|e| e.to_string())?;
-    c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS device_labels(id TEXT PRIMARY KEY,label TEXT NOT NULL,trust TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS event_log(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,title TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL);").map_err(|e|e.to_string())?;
+    c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS device_labels(id TEXT PRIMARY KEY,label TEXT NOT NULL,trust TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS event_log(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,title TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS quarantined_findings(id TEXT PRIMARY KEY,engine TEXT NOT NULL,classification TEXT NOT NULL,confidence TEXT NOT NULL,location TEXT NOT NULL,sha256 TEXT NOT NULL,detected_at TEXT NOT NULL,severity TEXT NOT NULL,file_name TEXT NOT NULL);").map_err(|e|e.to_string())?;
+    let _ = c.execute(
+        "ALTER TABLE device_labels ADD COLUMN device_type TEXT NOT NULL DEFAULT 'unknown'",
+        [],
+    );
     Ok(c)
 }
 fn record_event(path: &Path, event_type: &str, title: &str, detail: &str) {
@@ -180,6 +195,40 @@ fn record_event(path: &Path, event_type: &str, title: &str, detail: &str) {
             params![event_type, title, detail, Utc::now().to_rfc3339()],
         );
     }
+}
+fn stored_quarantine(db_path: &Path, quarantine_dir: &Path) -> Vec<(ThreatFinding, PathBuf)> {
+    let Ok(connection) = db(db_path) else {
+        return vec![];
+    };
+    let Ok(mut statement) = connection.prepare("SELECT id,engine,classification,confidence,location,sha256,detected_at,severity,file_name FROM quarantined_findings") else { return vec![] };
+    statement
+        .query_map([], |row| {
+            let timestamp: String = row.get(6)?;
+            let file_name: String = row.get(8)?;
+            Ok((
+                ThreatFinding {
+                    id: row.get(0)?,
+                    engine: row.get(1)?,
+                    classification: row.get(2)?,
+                    confidence: row.get(3)?,
+                    location: row.get(4)?,
+                    sha256: row.get(5)?,
+                    detected_at: DateTime::parse_from_rfc3339(&timestamp)
+                        .map(|value| value.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    severity: row.get(7)?,
+                    available_actions: vec!["Inspect metadata".into(), "Permanently remove".into()],
+                    simulated_state: Some("quarantined".into()),
+                },
+                quarantine_dir.join(file_name),
+            ))
+        })
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|(_, path)| path.is_file())
+        .collect()
 }
 fn private_ipv4(v: &str) -> bool {
     v.parse::<Ipv4Addr>()
@@ -197,19 +246,19 @@ fn stable_id(mac: &str, ip: &str) -> String {
     h.update(format!("{mac}|{ip}").as_bytes());
     format!("neighbor-{}", &format!("{:x}", h.finalize())[..16])
 }
-fn labels(path: &Path) -> HashMap<String, (String, String)> {
+fn labels(path: &Path) -> HashMap<String, (String, String, String)> {
     let Ok(c) = db(path) else {
         return HashMap::new();
     };
-    let Ok(mut s) = c.prepare("SELECT id,label,trust FROM device_labels") else {
+    let Ok(mut s) = c.prepare("SELECT id,label,trust,device_type FROM device_labels") else {
         return HashMap::new();
     };
-    s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+    s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
         .ok()
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .map(|(id, l, t)| (id, (l, t)))
+        .map(|(id, l, t, device_type)| (id, (l, t, device_type)))
         .collect()
 }
 
@@ -263,14 +312,15 @@ fn devices(db_path: &Path, gw: Option<&str>) -> Vec<DeviceProfile> {
                 continue;
             }
             let id = stable_id(&mac, p[0]);
-            let (name, trust) = known
-                .get(&id)
-                .cloned()
-                .unwrap_or(("Unidentified device".into(), "unknown".into()));
+            let (name, trust, device_type) = known.get(&id).cloned().unwrap_or((
+                "Unidentified device".into(),
+                "unknown".into(),
+                "unknown".into(),
+            ));
             out.push(DeviceProfile {
                 id,
                 name,
-                device_type: "unknown".into(),
+                device_type,
                 ip: p[0].into(),
                 mac,
                 vendor: None,
@@ -368,11 +418,21 @@ fn save_device_label(
     id: String,
     label: String,
     trust: String,
+    device_type: String,
 ) -> Result<DeviceProfile, String> {
     if id.len() > 128
         || label.trim().is_empty()
         || label.len() > 80
         || !["trusted", "unknown", "restricted"].contains(&trust.as_str())
+        || ![
+            "desktop",
+            "laptop",
+            "tv",
+            "streaming",
+            "cellphone",
+            "unknown",
+        ]
+        .contains(&device_type.as_str())
     {
         return Err("Invalid local device label".into());
     }
@@ -380,7 +440,7 @@ fn save_device_label(
         .into_iter()
         .find(|d| d.id == id)
         .ok_or("Device is not currently observed")?;
-    db(&state.db_path)?.execute("INSERT INTO device_labels(id,label,trust,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET label=excluded.label,trust=excluded.trust,updated_at=excluded.updated_at",params![id,label,trust,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;
+    db(&state.db_path)?.execute("INSERT INTO device_labels(id,label,trust,updated_at,device_type) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET label=excluded.label,trust=excluded.trust,updated_at=excluded.updated_at,device_type=excluded.device_type",params![id,label,trust,Utc::now().to_rfc3339(),device_type]).map_err(|e|e.to_string())?;
     record_event(
         &state.db_path,
         "device",
@@ -390,6 +450,7 @@ fn save_device_label(
     Ok(DeviceProfile {
         name: label,
         trust,
+        device_type,
         risk_reasons: vec![],
         ..current
     })
@@ -718,6 +779,15 @@ fn get_scan_progress(state: State<AppState>, id: String) -> Result<ScanProgress,
         if r.engine == "clamav" {
             let f = clam_findings(r);
             if !f.is_empty() {
+                if let Some(target) = r.target.as_ref() {
+                    let mut sources = state
+                        .finding_sources
+                        .lock()
+                        .map_err(|_| "Finding source state unavailable")?;
+                    for finding in &f {
+                        sources.insert(finding.id.clone(), target.clone());
+                    }
+                }
                 state
                     .findings
                     .lock()
@@ -789,12 +859,250 @@ fn defender_findings() -> Vec<ThreatFinding> {
 #[tauri::command]
 fn list_findings(state: State<AppState>) -> Vec<ThreatFinding> {
     let mut f = defender_findings();
+    f.extend(
+        stored_quarantine(&state.db_path, &state.quarantine_dir)
+            .into_iter()
+            .map(|(finding, _)| finding),
+    );
     if let Ok(local) = state.findings.lock() {
         f.extend(local.clone())
     }
     f.sort_by_key(|finding| std::cmp::Reverse(finding.detected_at));
     f.dedup_by(|a, b| a.id == b.id);
     f
+}
+
+fn open_windows_security() -> Result<(), String> {
+    Command::new("explorer.exe")
+        .arg("windowsdefender://threat")
+        .no_window()
+        .spawn()
+        .map_err(|_| "Could not open Windows Security")?;
+    Ok(())
+}
+
+#[tauri::command]
+fn manage_threat(
+    state: State<AppState>,
+    finding_id: String,
+    action: String,
+) -> Result<ThreatActionResult, String> {
+    if finding_id.is_empty()
+        || finding_id.len() > 160
+        || !finding_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        || !["inspect", "quarantine", "remove"].contains(&action.as_str())
+    {
+        return Err("Invalid threat action".into());
+    }
+    if finding_id.starts_with("defender-") {
+        open_windows_security()?;
+        return Ok(ThreatActionResult {
+            finding_id,
+            action,
+            status: "opened_security".into(),
+            message: "Opened Windows Security to complete Defender remediation.".into(),
+        });
+    }
+    if action == "inspect" {
+        if state
+            .quarantined
+            .lock()
+            .map_err(|_| "Quarantine state unavailable")?
+            .contains_key(&finding_id)
+        {
+            return Ok(ThreatActionResult {
+                finding_id,
+                action,
+                status: "completed".into(),
+                message:
+                    "The quarantined item is isolated; its metadata is shown in Sentinel Local."
+                        .into(),
+            });
+        }
+        let source = state
+            .finding_sources
+            .lock()
+            .map_err(|_| "Finding source state unavailable")?
+            .get(&finding_id)
+            .cloned()
+            .ok_or("The original file is no longer available")?;
+        user_file(source.to_string_lossy().as_ref())?;
+        Command::new("explorer.exe")
+            .arg("/select,")
+            .arg(source)
+            .no_window()
+            .spawn()
+            .map_err(|_| "Could not open the file location")?;
+        return Ok(ThreatActionResult {
+            finding_id,
+            action,
+            status: "completed".into(),
+            message: "Opened the verified file location for inspection.".into(),
+        });
+    }
+    if action == "quarantine" {
+        let source = state
+            .finding_sources
+            .lock()
+            .map_err(|_| "Finding source state unavailable")?
+            .get(&finding_id)
+            .cloned()
+            .ok_or("This finding cannot be quarantined")?;
+        let source = user_file(source.to_string_lossy().as_ref())?;
+        let expected = state
+            .findings
+            .lock()
+            .map_err(|_| "Finding state unavailable")?
+            .iter()
+            .find(|finding| finding.id == finding_id)
+            .map(|finding| finding.sha256.clone())
+            .ok_or("Finding is no longer active")?;
+        if file_hash(&source) != expected {
+            return Err("The file changed after scanning; scan it again before quarantine".into());
+        }
+        fs::create_dir_all(&state.quarantine_dir)
+            .map_err(|_| "Could not prepare private quarantine")?;
+        let mut digest = Sha256::new();
+        digest.update(format!(
+            "{}:{}",
+            finding_id,
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let destination = state
+            .quarantine_dir
+            .join(format!("{:x}.quarantine", digest.finalize()));
+        fs::rename(&source, &destination).map_err(|_| "Could not move the file into quarantine")?;
+        let quarantine_name = destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or("Invalid quarantine name")?
+            .to_string();
+        state
+            .quarantined
+            .lock()
+            .map_err(|_| "Quarantine state unavailable")?
+            .insert(finding_id.clone(), destination.clone());
+        state
+            .finding_sources
+            .lock()
+            .map_err(|_| "Finding source state unavailable")?
+            .remove(&finding_id);
+        if let Some(finding) = state
+            .findings
+            .lock()
+            .map_err(|_| "Finding state unavailable")?
+            .iter_mut()
+            .find(|finding| finding.id == finding_id)
+        {
+            finding.simulated_state = Some("quarantined".into());
+            finding.location = "Sentinel Local quarantine".into();
+            finding.available_actions =
+                vec!["Inspect metadata".into(), "Permanently remove".into()];
+        }
+        let stored = state
+            .findings
+            .lock()
+            .map_err(|_| "Finding state unavailable")?
+            .iter()
+            .find(|finding| finding.id == finding_id)
+            .cloned()
+            .ok_or("Finding state unavailable")?;
+        let metadata_result = db(&state.db_path)?.execute(
+                "INSERT OR REPLACE INTO quarantined_findings(id,engine,classification,confidence,location,sha256,detected_at,severity,file_name) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![stored.id,stored.engine,stored.classification,stored.confidence,stored.location,stored.sha256,stored.detected_at.to_rfc3339(),stored.severity,quarantine_name],
+            );
+        if metadata_result.is_err() {
+            let _ = fs::rename(&destination, &source);
+            state
+                .quarantined
+                .lock()
+                .map_err(|_| "Quarantine state unavailable")?
+                .remove(&finding_id);
+            state
+                .finding_sources
+                .lock()
+                .map_err(|_| "Finding source state unavailable")?
+                .insert(finding_id.clone(), source.clone());
+            if let Some(finding) = state
+                .findings
+                .lock()
+                .map_err(|_| "Finding state unavailable")?
+                .iter_mut()
+                .find(|finding| finding.id == finding_id)
+            {
+                finding.simulated_state = None;
+                finding.location = source
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Selected file")
+                    .into();
+                finding.available_actions = vec!["Inspect".into(), "Quarantine".into()];
+            }
+            return Err("Could not save quarantine metadata; the file was returned to its original location".into());
+        }
+        record_event(
+            &state.db_path,
+            "scan",
+            "Threat quarantined",
+            "File moved to private local quarantine",
+        );
+        return Ok(ThreatActionResult {
+            finding_id,
+            action,
+            status: "completed".into(),
+            message: "The verified file was moved into Sentinel Local quarantine.".into(),
+        });
+    }
+    let path = state
+        .quarantined
+        .lock()
+        .map_err(|_| "Quarantine state unavailable")?
+        .get(&finding_id)
+        .cloned()
+        .ok_or("Only a Sentinel-quarantined file can be permanently removed")?;
+    let quarantine = state
+        .quarantine_dir
+        .canonicalize()
+        .map_err(|_| "Private quarantine is unavailable")?;
+    let target = path
+        .canonicalize()
+        .map_err(|_| "Quarantined file is unavailable")?;
+    if !target.starts_with(&quarantine)
+        || target.extension().and_then(|value| value.to_str()) != Some("quarantine")
+    {
+        return Err("Quarantine path validation failed".into());
+    }
+    fs::remove_file(target).map_err(|_| "Could not remove the quarantined file")?;
+    state
+        .quarantined
+        .lock()
+        .map_err(|_| "Quarantine state unavailable")?
+        .remove(&finding_id);
+    state
+        .findings
+        .lock()
+        .map_err(|_| "Finding state unavailable")?
+        .retain(|finding| finding.id != finding_id);
+    db(&state.db_path)?
+        .execute(
+            "DELETE FROM quarantined_findings WHERE id=?1",
+            params![finding_id],
+        )
+        .map_err(|_| "Could not remove quarantine metadata")?;
+    record_event(
+        &state.db_path,
+        "scan",
+        "Quarantined threat removed",
+        "Quarantine copy permanently deleted",
+    );
+    Ok(ThreatActionResult {
+        finding_id,
+        action,
+        status: "completed".into(),
+        message: "The quarantined file was permanently removed.".into(),
+    })
 }
 #[tauri::command]
 fn list_activity_events(state: State<AppState>) -> Vec<ActivityEvent> {
@@ -941,14 +1249,23 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
             let scan_dir = dir.join("scan-output");
+            let quarantine_dir = dir.join("quarantine");
             fs::create_dir_all(&scan_dir)?;
+            fs::create_dir_all(&quarantine_dir)?;
             let db_path = dir.join("sentinel-local.sqlite3");
             db(&db_path).map_err(std::io::Error::other)?;
+            let stored_paths = stored_quarantine(&db_path, &quarantine_dir)
+                .into_iter()
+                .map(|(finding, path)| (finding.id, path))
+                .collect();
             app.manage(AppState {
                 scans: Mutex::new(HashMap::new()),
                 findings: Mutex::new(Vec::new()),
+                finding_sources: Mutex::new(HashMap::new()),
+                quarantined: Mutex::new(stored_paths),
                 db_path,
                 scan_dir,
+                quarantine_dir,
             });
             Ok(())
         })
@@ -963,6 +1280,7 @@ pub fn run() {
             get_scan_progress,
             cancel_scan,
             list_findings,
+            manage_threat,
             list_activity_events,
             run_diagnostics,
             open_verified_tool,

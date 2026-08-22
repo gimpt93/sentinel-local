@@ -30,12 +30,14 @@ export default function App() {
   const [toast, setToast] = useState<string>();
   const [gateway, setGateway] = useState("192.168.1.1");
   const [adapter, setAdapter] = useState("Wi-Fi · HomeWiFi_5G");
+  const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem("sentinel-theme") === "dark");
 
   const load = async () => {
     const [nextSnapshot, topology, nextTools, nextEvents, nextFindings] = await Promise.all([bridge.snapshot(), bridge.topology(), bridge.tools(), bridge.events(), bridge.findings()]);
     setSnapshot(nextSnapshot); setDevices(topology.devices); setTools(nextTools); setEvents(nextEvents); setFindings(nextFindings); setGateway(topology.gateway); setAdapter(topology.adapter); setSelectedId(current => current || topology.devices.find(d => d.trust === "unknown")?.id || topology.devices[0]?.id || ""); setLoaded(true);
   };
   useEffect(() => { void load(); }, []);
+  useEffect(() => { document.documentElement.dataset.theme = darkMode ? "dark" : "light"; window.localStorage.setItem("sentinel-theme", darkMode ? "dark" : "light"); }, [darkMode]);
   useEffect(() => { if (!toast) return; const id = window.setTimeout(() => setToast(undefined), 4200); return () => window.clearTimeout(id); }, [toast]);
   useEffect(() => { if (!scan || scan.state !== "running") return; const id = window.setTimeout(async () => setScan(await bridge.scanProgress(scan.id)), 1500); return () => clearTimeout(id); }, [scan]);
 
@@ -45,11 +47,12 @@ export default function App() {
     const result = await bridge.startScan({ scanType, engine, targets: [], exclusions: [], consentTimestamp: new Date().toISOString() }); setScan(result); setToast(`${scanType === "smart" ? "Smart" : scanType} scan started locally.`);
   };
   const startClamScan = async () => { const target = await bridge.chooseScanTarget(); if (!target) { setToast("No file selected."); return; } const result = await bridge.startScan({ scanType:"file", engine:"clamav", targets:[target], exclusions:[], consentTimestamp:new Date().toISOString() }); setScan(result); setToast("ClamAV on-demand scan started for the selected file."); };
-  const saveLabel = async (id: string, label: string, trust: string) => { await bridge.saveDeviceLabel(id, label, trust); setDevices(current => current.map(d => d.id === id ? { ...d, name: label, trust: trust as DeviceProfile["trust"] } : d)); setToast("Local device label saved."); };
+  const saveLabel = async (id: string, label: string, trust: string, type: DeviceProfile["type"]) => { await bridge.saveDeviceLabel(id, label, trust, type); setDevices(current => current.map(d => d.id === id ? { ...d, name: label, type, trust: trust as DeviceProfile["trust"] } : d)); setToast("Local device details saved."); };
   const openTool = async (id: string) => { const ok = await bridge.openVerifiedTool(id); setToast(ok ? "Opened verified destination." : "Verified tool link is available in the packaged app."); };
   const openRouter = async () => { const ok = await bridge.openRouter(gateway); setToast(ok ? "Opened your private gateway." : `Router controls: http://${gateway}`); };
   const runDiagnostics = async () => { setDiagnostics(await bridge.diagnostics()); setToast("Diagnostics refreshed using live local checks."); };
   const refreshFindings = async () => { setFindings(await bridge.findings()); setToast("Live findings refreshed."); };
+  const manageThreat = async (finding: ThreatFinding, action: "inspect" | "quarantine" | "remove") => { const result = await bridge.threatAction(finding.id, action); setToast(result.message); setFindings(await bridge.findings()); };
 
   return <div className="app-shell">
     <Sidebar view={view} overall={snapshot.overall} reviewCount={reviewCount} onChange={setView}/>
@@ -60,11 +63,11 @@ export default function App() {
         <div className="overview-layout"><TopologyMap devices={devices} snapshot={snapshot} selectedId={selectedId} onSelect={setSelectedId} onOpenView={setView}/><DeviceInspector device={selected} onClose={() => setSelectedId("")} onIdentify={() => setView("members")} onRestrict={() => setToast("Restriction simulated. Review router support before changing access.")} onRouter={openRouter}/></div>
         <EventTimeline events={events}/><ProtectionDrawer tools={tools} onOpen={openTool}/>
       </> : view === "scans" ? <ScansView tools={tools} progress={scan} onStart={startScan} onClamScan={startClamScan} onCancel={async () => scan && setScan(await bridge.cancelScan(scan.id))}/>
-      : view === "threats" ? <ThreatsView findings={findings} onRefresh={refreshFindings}/> : view === "privacy" ? <PrivacyView tools={tools} onOpen={openTool}/>
+      : view === "threats" ? <ThreatsView findings={findings} onRefresh={refreshFindings} onAction={manageThreat}/> : view === "privacy" ? <PrivacyView tools={tools} onOpen={openTool}/>
       : view === "network" ? <NetworkView gateway={gateway} adapter={adapter} onRouter={openRouter}/>
       : view === "members" ? <MembersView devices={devices} onSave={saveLabel}/>
       : view === "diagnostics" ? <DiagnosticsView results={diagnostics} onRun={runDiagnostics}/>
-      : <SettingsView/>}
+      : <SettingsView darkMode={darkMode} onDarkMode={setDarkMode}/>}
     </main>
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;

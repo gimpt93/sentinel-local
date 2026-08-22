@@ -12,6 +12,6 @@ export function Sidebar({ view, overall, reviewCount, onChange }: { view: ViewId
     <nav aria-label="Primary navigation">{items.map(([id, label, Icon]) => <button key={id} aria-label={label} className={view === id ? "nav-item active" : "nav-item"} onClick={() => onChange(id)} aria-current={view === id ? "page" : undefined}><Icon size={20} /><span>{label}</span></button>)}</nav>
     <button aria-label="Settings" className={view === "settings" ? "nav-item active settings-link" : "nav-item settings-link"} onClick={() => onChange("settings")}><Settings size={20} /><span>Settings</span></button>
     <div className="sidebar-status"><span className={`status-dot ${overall === "at_risk" ? "risk" : overall === "protected" ? "good" : "review"}`} /> <strong>{overall === "at_risk" ? "At risk" : overall === "protected" ? "Protected" : "Needs review"}</strong><small><span className={`status-dot ${reviewCount ? "review" : "good"}`} /> {reviewCount ? `${reviewCount} unknown ${reviewCount === 1 ? "device" : "devices"}` : "No unknown devices"}</small></div>
-    <footer>Version 0.2.0 · Safe release<br/><span>▣ Local only</span></footer>
+    <footer>Version 0.3.0 · Safe release<br/><span>▣ Local only</span></footer>
   </aside>;
 }
